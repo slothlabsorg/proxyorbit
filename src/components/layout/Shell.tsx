@@ -25,7 +25,7 @@ export function Shell({
   children,
 }: ShellProps) {
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <Titlebar proxyStatus={proxyStatus} />
 
       <div className="flex flex-1 overflow-hidden">

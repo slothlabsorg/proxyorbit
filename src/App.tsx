@@ -8,6 +8,7 @@ import { Home } from '@/screens/Home'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
+import { UpdateBanner } from '@/components/ui/UpdateBanner'
 
 function getUrlParam(key: string): string | null {
   try { return new URL(window.location.href).searchParams.get(key) } catch { return null }
@@ -121,29 +122,34 @@ export default function App() {
   }
 
   return (
-    <Shell
-      screen={screen}
-      onNavigate={setScreen}
-      sidebarCollapsed={sidebarCollapsed}
-      onToggleSidebar={() => setSidebarCollapsed(c => !c)}
-      proxyStatus={proxyStatus}
-      proxyRunStatus={proxyRunStatus}
-      entryCount={entries.length}
-      filteredCount={entries.length}
-      onToggleProxy={handleToggleProxy}
-    >
-      {screen === 'home' && (
-        <Home
-          entries={entries}
-          isRunning={proxyRunStatus === 'running'}
-          onClear={handleClear}
-          onDelete={handleDelete}
-          onStartProxy={handleToggleProxy}
-        />
-      )}
-      {screen === 'settings' && <Settings />}
-      {screen === 'docs'     && <Docs />}
-      {screen === 'support'  && <Support />}
-    </Shell>
+    <div className="flex flex-col h-screen overflow-hidden">
+      <UpdateBanner />
+      <div className="flex-1 min-h-0">
+        <Shell
+          screen={screen}
+          onNavigate={setScreen}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+          proxyStatus={proxyStatus}
+          proxyRunStatus={proxyRunStatus}
+          entryCount={entries.length}
+          filteredCount={entries.length}
+          onToggleProxy={handleToggleProxy}
+        >
+          {screen === 'home' && (
+            <Home
+              entries={entries}
+              isRunning={proxyRunStatus === 'running'}
+              onClear={handleClear}
+              onDelete={handleDelete}
+              onStartProxy={handleToggleProxy}
+            />
+          )}
+          {screen === 'settings' && <Settings />}
+          {screen === 'docs'     && <Docs />}
+          {screen === 'support'  && <Support />}
+        </Shell>
+      </div>
+    </div>
   )
 }
