@@ -1,22 +1,25 @@
-import type { ProxyEntry, ProxyStatus, ProxySettings } from '@/types'
+import type {
+  ProxyEntry, ProxyStatus, ProxySettings,
+  HeaderList, ReplayResult, InterceptPayload, InterceptDecision,
+} from '@/types'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import { listen as tauriListen, emit as tauriEmit } from '@tauri-apps/api/event'
 
-// Tauri invoke wrapper — falls back gracefully in browser mode
+// Thin wrappers around the real Tauri 2 API modules. The previous hand-rolled
+// `__TAURI_INTERNALS__.listen` didn't exist in Tauri 2 (listen goes through
+// a plugin command + channel) — which is why proxy-request events were
+// never reaching the UI even though Rust was emitting them.
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<T> } }
-  if (w.__TAURI_INTERNALS__?.invoke) {
-    return w.__TAURI_INTERNALS__.invoke(cmd, args)
-  }
-  throw new Error(`Tauri not available (cmd: ${cmd})`)
+  return tauriInvoke<T>(cmd, args)
 }
 
-// Tauri event listener
 type UnlistenFn = () => void
 async function listen<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
-  const w = window as unknown as { __TAURI_INTERNALS__?: { listen: (event: string, handler: (e: { payload: T }) => void) => Promise<UnlistenFn> } }
-  if (w.__TAURI_INTERNALS__?.listen) {
-    return w.__TAURI_INTERNALS__.listen(event, (e) => handler(e.payload))
-  }
-  return () => {}
+  return tauriListen<T>(event, (e) => handler(e.payload))
+}
+
+async function emit(event: string, payload: unknown): Promise<void> {
+  await tauriEmit(event, payload)
 }
 
 export const api = {
@@ -39,6 +42,25 @@ export const api = {
   getSettings: () => invoke<ProxySettings>('get_settings'),
   saveSettings: (settings: ProxySettings) => invoke<void>('save_settings', { settings }),
 
+  // Interceptor
+  setIntercepting: (enabled: boolean) => invoke<void>('set_intercepting', { enabled }),
+
+  // Replay a captured (or modified) request outside the proxy stream.
+  // Doesn't write to the entry log — replays are considered disposable.
+  replayRequest: (args: { method: string; url: string; headers: HeaderList; body?: string | null }) =>
+    invoke<ReplayResult>('replay_request', args),
+
+  // Release an intercept hold — `action: "forward"` (optionally with
+  // modified method/url/headers/body) or `"drop"` (returns 444).
+  releaseIntercept: (decision: InterceptDecision) => emit('intercept-release', decision),
+
+  // MITM HTTPS inspection
+  setMitmEnabled: (enabled: boolean) => invoke<void>('set_mitm_enabled', { enabled }),
+  getCaPem: () => invoke<string>('get_ca_pem'),
+  getCaPemPath: () => invoke<string>('get_ca_pem_path'),
+  setMitmBypassHosts: (hosts: string[]) => invoke<void>('set_mitm_bypass_hosts', { hosts }),
+
   // Events
   onRequest: (handler: (entry: ProxyEntry) => void) => listen<ProxyEntry>('proxy-request', handler),
+  onInterceptRequest: (handler: (p: InterceptPayload) => void) => listen<InterceptPayload>('intercept-request', handler),
 }

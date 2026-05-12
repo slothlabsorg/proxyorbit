@@ -1,9 +1,23 @@
 import React from 'react'
 import type { ProxyStatus } from '@/types'
 import { ProxyStatusDot } from '@/components/ui/Badge'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 interface TitlebarProps {
   proxyStatus: ProxyStatus | null
+}
+
+// `data-tauri-drag-region` + CSS `-webkit-app-region: drag` aren't reliable
+// on Tauri 2 macOS with `titleBarStyle: Overlay` — the CSS prop is a no-op
+// on WebKit and the DOM handler sometimes loses binding. Same failure mode
+// we hit in cloudorbit; same fix: call `startDragging()` explicitly on
+// mousedown. Interactive children (button/a/input) are filtered so clicks
+// on the status badge still work.
+function startDragOnMouseDown(e: React.MouseEvent) {
+  if (e.button !== 0) return
+  const t = e.target as HTMLElement
+  if (t.closest('button, a, input, select, textarea, [role="button"]')) return
+  try { void getCurrentWindow().startDragging() } catch { /* not in Tauri */ }
 }
 
 function AppLogo() {
@@ -36,6 +50,7 @@ export function Titlebar({ proxyStatus }: TitlebarProps) {
   return (
     <div
       data-tauri-drag-region
+      onMouseDown={startDragOnMouseDown}
       className="h-12 flex items-center px-4 border-b border-border-subtle bg-bg-base flex-shrink-0 select-none"
       style={{ paddingLeft: '80px' }}
     >

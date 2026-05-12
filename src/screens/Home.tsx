@@ -1,9 +1,11 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { ProxyEntry } from '@/types'
+import type { ProxyEntry, HeaderList, ReplayResult } from '@/types'
 import { MethodBadge, StatusBadge, ProtocolBadge } from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { toCurl, prettyBody } from '@/lib/curl'
+import { api } from '@/lib/tauri'
 
 interface HomeProps {
   entries: ProxyEntry[]
@@ -42,6 +44,10 @@ interface FilterState {
   method: string
   statusFilter: 'all' | '2xx' | '3xx' | '4xx' | '5xx' | 'err'
   protocol: 'all' | 'http' | 'https'
+  // CONNECT entries are TLS tunnel handshakes, not real API calls. They're
+  // noisy when MITM is off (every HTTPS request generates one) and confuse
+  // the method/status filters. Hidden by default; user can toggle on.
+  showTunnels: boolean
 }
 
 const STATUS_OPTIONS = [
@@ -121,6 +127,20 @@ function FilterBar({ filter, onChange }: { filter: FilterState; onChange: (f: Fi
           </button>
         ))}
       </div>
+
+      {/* Show tunnels toggle — off by default so CONNECT noise doesn't
+          crowd the list. On reveals the TLS handshake entries too. */}
+      <button
+        onClick={() => onChange({ ...filter, showTunnels: !filter.showTunnels })}
+        className={`px-2 py-1 rounded text-[10px] transition-colors ${
+          filter.showTunnels
+            ? 'bg-primary/15 text-primary border border-primary/30'
+            : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface border border-transparent'
+        }`}
+        title="Show CONNECT tunnel handshakes (usually hidden — noisy when MITM is off)"
+      >
+        Tunnels
+      </button>
     </div>
   )
 }
@@ -149,7 +169,7 @@ function RequestRow({
       className={`grid items-center text-xs border-b border-border-subtle cursor-pointer transition-colors group ${
         isSelected ? 'bg-primary/8 border-l-2 border-l-primary' : 'hover:bg-bg-surface border-l-2 border-l-transparent'
       }`}
-      style={{ gridTemplateColumns: '70px 52px 42px 1fr 60px 60px 80px 28px' }}
+      style={{ gridTemplateColumns: '70px 88px 60px 1fr 60px 60px 80px 28px' }}
     >
       {/* Time */}
       <span className="px-2 py-2 text-text-muted font-mono text-[10px] whitespace-nowrap">
@@ -196,60 +216,389 @@ function RequestRow({
 
 // ── Detail panel ───────────────────────────────────────────────────────────────
 
+type DetailTab = 'overview' | 'headers' | 'body' | 'replay'
+
 function DetailPanel({ entry, onClose }: { entry: ProxyEntry; onClose: () => void }) {
+  const [tab, setTab] = useState<DetailTab>('overview')
+  const [curlCopied, setCurlCopied] = useState(false)
+
+  // Reset to overview when the selected entry changes so the panel doesn't
+  // show a stale tab (e.g. body viewer empty because the previous entry
+  // had a body but this one doesn't).
+  useEffect(() => { setTab('overview') }, [entry.id])
+
+  const copyCurl = async () => {
+    try {
+      await navigator.clipboard.writeText(toCurl(entry))
+      setCurlCopied(true)
+      setTimeout(() => setCurlCopied(false), 1500)
+    } catch { /* clipboard denied */ }
+  }
+
+  const tabs: { id: DetailTab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'headers',  label: 'Headers' },
+    { id: 'body',     label: 'Body' },
+    { id: 'replay',   label: 'Replay' },
+  ]
+
   return (
     <motion.div
       initial={{ x: 20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 20, opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className="w-80 flex-shrink-0 border-l border-border bg-bg-elevated flex flex-col overflow-hidden"
+      className="w-[420px] flex-shrink-0 border-l border-border bg-bg-elevated flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle">
         <span className="text-xs font-semibold text-text-primary">Request Details</span>
-        <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={copyCurl}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-text-secondary hover:text-text-primary hover:bg-bg-surface transition-colors border border-border"
+            title="Copy as cURL command"
+          >
+            {curlCopied ? (
+              <>
+                <svg className="w-3 h-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+                Copied
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1 -2 -2V4a2 2 0 0 1 2 -2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Copy as cURL
+              </>
+            )}
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 text-text-muted hover:text-text-primary transition-colors"
+            title="Close"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-        {/* Method + URL */}
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <MethodBadge method={entry.method} />
-            <ProtocolBadge isHttps={entry.is_https} />
-            <StatusBadge status={entry.status} />
-          </div>
-          <p className="text-text-primary font-mono text-[11px] break-all leading-relaxed mt-2">{entry.url}</p>
+      {/* Summary line (always visible above tabs) */}
+      <div className="px-4 py-2 border-b border-border-subtle">
+        <div className="flex items-center gap-2 mb-1">
+          <MethodBadge method={entry.method} />
+          <ProtocolBadge isHttps={entry.is_https} />
+          <StatusBadge status={entry.status} />
+          {entry.kind === 'connect' && (
+            <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-bg-surface text-text-muted border border-border">tunnel</span>
+          )}
         </div>
+        <p className="text-text-primary font-mono text-[11px] break-all leading-relaxed">{entry.url}</p>
+      </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { label: 'Duration', value: formatMs(entry.duration_ms) },
-            { label: 'Req Size', value: formatBytes(entry.request_size) },
-            { label: 'Res Size', value: formatBytes(entry.response_size) },
-            { label: 'Process',  value: entry.process ?? '—' },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-bg-surface rounded-lg p-2">
-              <p className="text-text-muted text-[10px] mb-0.5">{label}</p>
-              <p className="text-text-primary font-mono text-[11px] truncate">{value}</p>
+      {/* Tabs */}
+      <div className="flex border-b border-border-subtle bg-bg-base flex-shrink-0">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 px-3 py-2 text-[11px] font-medium transition-colors border-b-2 ${
+              tab === t.id
+                ? 'text-primary border-primary'
+                : 'text-text-muted hover:text-text-secondary border-transparent'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto">
+        {tab === 'overview' && <OverviewTab entry={entry} />}
+        {tab === 'headers'  && <HeadersTab entry={entry} />}
+        {tab === 'body'     && <BodyTab entry={entry} />}
+        {tab === 'replay'   && <ReplayTab entry={entry} />}
+      </div>
+    </motion.div>
+  )
+}
+
+function OverviewTab({ entry }: { entry: ProxyEntry }) {
+  return (
+    <div className="p-4 space-y-4 text-xs">
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { label: 'Duration', value: formatMs(entry.duration_ms) },
+          { label: 'Req Size', value: formatBytes(entry.request_size) },
+          { label: 'Res Size', value: formatBytes(entry.response_size) },
+          { label: 'Process',  value: entry.process ?? '—' },
+        ].map(({ label, value }) => (
+          <div key={label} className="bg-bg-surface rounded-lg p-2">
+            <p className="text-text-muted text-[10px] mb-0.5">{label}</p>
+            <p className="text-text-primary font-mono text-[11px] truncate">{value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        <DetailRow label="Host"      value={entry.host} />
+        <DetailRow label="Path"      value={entry.path} />
+        <DetailRow label="Timestamp" value={new Date(entry.timestamp).toISOString()} />
+        <DetailRow label="Kind"      value={entry.kind} mono />
+        <DetailRow label="ID"        value={entry.id} mono />
+      </div>
+      {entry.kind === 'connect' && (
+        <div className="bg-bg-surface border border-border rounded-lg p-3 text-[11px] text-text-muted leading-relaxed">
+          HTTPS tunnel — headers and body are end-to-end encrypted and not
+          captured. Inspection requires a MITM CA trust, planned for v1.1.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HeadersTab({ entry }: { entry: ProxyEntry }) {
+  return (
+    <div className="p-4 space-y-4 text-[11px]">
+      <HeadersSection title="Request Headers"  headers={entry.request_headers}  />
+      <HeadersSection title="Response Headers" headers={entry.response_headers} />
+    </div>
+  )
+}
+
+function HeadersSection({ title, headers }: { title: string; headers: HeaderList }) {
+  const [copied, setCopied] = useState(false)
+  const copyAll = async () => {
+    const text = headers.map(([k, v]) => `${k}: ${v}`).join('\n')
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch { /* denied */ }
+  }
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-text-muted text-[10px] font-semibold uppercase tracking-wider">{title}</p>
+        {headers.length > 0 && (
+          <button
+            onClick={copyAll}
+            className="text-[10px] text-text-muted hover:text-primary transition-colors"
+            title="Copy all"
+          >
+            {copied ? 'Copied' : 'Copy all'}
+          </button>
+        )}
+      </div>
+      {headers.length === 0 ? (
+        <p className="text-text-muted/60 text-[11px] italic py-1">No headers captured.</p>
+      ) : (
+        <div className="bg-bg-surface rounded-lg border border-border-subtle divide-y divide-border-subtle">
+          {headers.map(([k, v], i) => (
+            <div key={i} className="flex gap-2 px-2.5 py-1.5">
+              <span className="text-text-secondary font-mono text-[11px] flex-shrink-0 min-w-20">{k}</span>
+              <span className="text-text-primary font-mono text-[11px] break-all">{v}</span>
             </div>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
 
-        {/* Details */}
-        <div className="space-y-2">
-          <DetailRow label="Host"      value={entry.host} />
-          <DetailRow label="Path"      value={entry.path} />
-          <DetailRow label="Timestamp" value={new Date(entry.timestamp).toISOString()} />
-          <DetailRow label="ID"        value={entry.id} mono />
-        </div>
+function BodyTab({ entry }: { entry: ProxyEntry }) {
+  return (
+    <div className="p-4 space-y-4">
+      <BodySection
+        title="Request Body"
+        body={entry.request_body}
+        truncated={entry.request_body_truncated}
+      />
+      <BodySection
+        title="Response Body"
+        body={entry.response_body}
+        truncated={entry.response_body_truncated}
+      />
+    </div>
+  )
+}
+
+function BodySection({ title, body, truncated }: { title: string; body: string | null; truncated: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const { text, language } = prettyBody(body)
+
+  const copy = async () => {
+    if (!text) return
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch { /* denied */ }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="flex items-center gap-1 text-text-muted text-[10px] font-semibold uppercase tracking-wider hover:text-text-primary transition-colors"
+        >
+          <svg className={`w-2.5 h-2.5 transition-transform ${expanded ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <polyline points="9 6 15 12 9 18"/>
+          </svg>
+          {title}
+          {language !== 'empty' && (
+            <span className={`ml-1.5 text-[9px] font-normal normal-case tracking-normal px-1 py-0.5 rounded ${
+              language === 'json' ? 'bg-primary/10 text-primary' :
+              language === 'binary' ? 'bg-warning/10 text-warning' :
+              'bg-bg-surface text-text-muted'
+            }`}>{language}</span>
+          )}
+          {truncated && (
+            <span className="ml-1 text-[9px] font-normal normal-case tracking-normal text-warning">truncated</span>
+          )}
+        </button>
+        {text && (
+          <button onClick={copy} className="text-[10px] text-text-muted hover:text-primary transition-colors">
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        )}
       </div>
-    </motion.div>
+      {expanded && (
+        language === 'empty' ? (
+          <p className="text-text-muted/60 text-[11px] italic py-1">Empty.</p>
+        ) : (
+          <pre className={`bg-bg-surface rounded-lg border border-border-subtle p-2.5 text-[11px] font-mono whitespace-pre-wrap break-all max-h-[280px] overflow-auto ${
+            language === 'binary' ? 'text-warning/80' : 'text-text-primary'
+          }`}>{text}</pre>
+        )
+      )}
+    </div>
+  )
+}
+
+function ReplayTab({ entry }: { entry: ProxyEntry }) {
+  // Local editable copy of method/url/headers/body. Initialised from the
+  // entry; changes don't affect the captured entry in the log.
+  const [method, setMethod]     = useState(entry.method)
+  const [url, setUrl]           = useState(entry.url)
+  const [headersText, setHeadersText] = useState(
+    entry.request_headers.map(([k, v]) => `${k}: ${v}`).join('\n'),
+  )
+  const [body, setBody]         = useState(entry.request_body ?? '')
+  const [sending, setSending]   = useState(false)
+  const [result, setResult]     = useState<ReplayResult | null>(null)
+  const [error, setError]       = useState<string | null>(null)
+
+  // Reset the editable state when the selected entry changes.
+  useEffect(() => {
+    setMethod(entry.method)
+    setUrl(entry.url)
+    setHeadersText(entry.request_headers.map(([k, v]) => `${k}: ${v}`).join('\n'))
+    setBody(entry.request_body ?? '')
+    setResult(null)
+    setError(null)
+  }, [entry.id])
+
+  const parseHeaders = (): HeaderList => {
+    const out: HeaderList = []
+    for (const line of headersText.split('\n')) {
+      const idx = line.indexOf(':')
+      if (idx < 0) continue
+      const k = line.slice(0, idx).trim()
+      const v = line.slice(idx + 1).trim()
+      if (k) out.push([k, v])
+    }
+    return out
+  }
+
+  const send = async () => {
+    setSending(true); setError(null); setResult(null)
+    try {
+      const r = await api.replayRequest({
+        method, url,
+        headers: parseHeaders(),
+        body: body || null,
+      })
+      setResult(r)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="p-4 space-y-3 text-[11px]">
+      <p className="text-text-muted text-[10px] leading-relaxed">
+        Edit and re-send the request. Runs outside the capture log —
+        results show here inline.
+      </p>
+
+      <div className="flex gap-2">
+        <select
+          value={method}
+          onChange={e => setMethod(e.target.value)}
+          className="bg-bg-surface border border-border rounded px-2 py-1 text-[11px] font-mono"
+        >
+          {['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'].map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          className="flex-1 bg-bg-surface border border-border rounded px-2 py-1 text-[11px] font-mono text-text-primary outline-none focus:border-border-focus"
+        />
+      </div>
+
+      <div>
+        <label className="text-text-muted text-[10px] font-semibold uppercase tracking-wider block mb-1">Headers</label>
+        <textarea
+          value={headersText}
+          onChange={e => setHeadersText(e.target.value)}
+          rows={5}
+          spellCheck={false}
+          className="w-full bg-bg-surface border border-border rounded px-2 py-1.5 text-[11px] font-mono text-text-primary outline-none focus:border-border-focus resize-y"
+          placeholder="Accept: application/json"
+        />
+      </div>
+
+      <div>
+        <label className="text-text-muted text-[10px] font-semibold uppercase tracking-wider block mb-1">Body</label>
+        <textarea
+          value={body}
+          onChange={e => setBody(e.target.value)}
+          rows={4}
+          spellCheck={false}
+          className="w-full bg-bg-surface border border-border rounded px-2 py-1.5 text-[11px] font-mono text-text-primary outline-none focus:border-border-focus resize-y"
+          placeholder="Request body…"
+        />
+      </div>
+
+      <Button onClick={send} disabled={sending}>
+        {sending ? 'Sending…' : 'Send'}
+      </Button>
+
+      {error && (
+        <div className="bg-danger/10 border border-danger/30 rounded p-2 text-danger text-[11px] font-mono whitespace-pre-wrap break-all">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 pt-1 border-t border-border-subtle">
+            <StatusBadge status={result.status} />
+            <span className="text-text-muted text-[11px] font-mono">{result.duration_ms}ms</span>
+            {result.error && (
+              <span className="text-danger text-[11px]">error: {result.error}</span>
+            )}
+          </div>
+          <HeadersSection title="Response Headers" headers={result.response_headers} />
+          <BodySection title="Response Body" body={result.response_body} truncated={result.response_body_truncated} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -270,6 +619,7 @@ export function Home({ entries, isRunning, onClear, onDelete, onStartProxy }: Ho
     method: '',
     statusFilter: 'all',
     protocol: 'all',
+    showTunnels: false,
   })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -284,6 +634,9 @@ export function Home({ entries, isRunning, onClear, onDelete, onStartProxy }: Ho
 
   const filtered = useMemo(() => {
     return entries.filter(e => {
+      // Hide CONNECT tunnel entries unless explicitly toggled on — they're
+      // TLS setup noise, not user-initiated API calls.
+      if (!filter.showTunnels && e.kind === 'connect') return false
       if (filter.method && e.method.toUpperCase() !== filter.method) return false
       if (filter.protocol === 'https' && !e.is_https) return false
       if (filter.protocol === 'http' && e.is_https) return false
@@ -365,7 +718,7 @@ export function Home({ entries, isRunning, onClear, onDelete, onStartProxy }: Ho
           {/* Column headers */}
           <div
             className="grid text-[10px] font-semibold text-text-muted uppercase tracking-wider px-0 py-1.5 border-b border-border bg-bg-elevated flex-shrink-0"
-            style={{ gridTemplateColumns: '70px 52px 42px 1fr 60px 60px 80px 28px' }}
+            style={{ gridTemplateColumns: '70px 88px 60px 1fr 60px 60px 80px 28px' }}
           >
             <span className="px-2">Time</span>
             <span className="px-1">Method</span>

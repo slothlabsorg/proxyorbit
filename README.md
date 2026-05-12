@@ -1,6 +1,6 @@
 # ProxyOrbit
 
-**HTTP/HTTPS proxy inspector for developers.** Run a local intercepting proxy, watch every request in real time, inspect headers and bodies, and replay requests — without Wireshark, without Charles, without a subscription.
+**HTTP/HTTPS proxy inspector for developers.** Run a local intercepting proxy, watch every request in real time, inspect headers and bodies, replay, intercept, and modify — without Wireshark, without Charles, without a subscription.
 
 Part of the [SlothLabs](https://slothlabs.org) family — native Rust, free forever.
 
@@ -8,9 +8,9 @@ Part of the [SlothLabs](https://slothlabs.org) family — native Rust, free fore
 
 ## What it does
 
-ProxyOrbit starts a local HTTP/HTTPS proxy on a port you choose (default 8080) and automatically configures your system's network settings to route traffic through it. Every request is captured and displayed in a live feed with method, status, URL, timing, and full request/response detail.
+ProxyOrbit starts a local HTTP/HTTPS proxy on a port you choose (default 8080) and, on macOS, auto-configures your system's network settings to route traffic through it. Every request is captured in a live feed with method, status, URL, headers, body, and timing. Close the app and macOS proxy state is restored automatically.
 
-Close the app and your system proxy settings are restored automatically.
+For HTTPS body inspection, toggle on MITM mode — ProxyOrbit generates a local root CA and mints per-host leaf certs on the fly.
 
 ---
 
@@ -20,40 +20,187 @@ Close the app and your system proxy settings are restored automatically.
 |---|---|
 | HTTP/HTTPS intercepting proxy (tokio + hyper) | ✅ |
 | Real-time request log with live feed | ✅ |
-| Request detail — method, status, headers, body, timing | ✅ |
-| System proxy auto-configure (`networksetup` on macOS) | ✅ |
-| System proxy auto-restore on exit | ✅ |
-| Filter / search by URL, method, or status | ✅ |
-| Start / stop proxy from the UI | ✅ |
-| Request count + proxy status badge | ✅ |
-| Mock mode for browser preview (`?mock=1`) | ✅ |
-| Windows & Linux support | 🚧 Coming soon |
+| Request/response headers + body capture | ✅ |
+| HTTPS MITM inspection with on-the-fly CA | ✅ |
+| Copy as cURL | ✅ |
+| Replay request (edit + send) | ✅ |
+| Intercept + modify (pause → edit → forward / drop) | ✅ |
+| Pretty-print JSON / collapsible body viewer | ✅ |
+| Filter by URL / method / status / protocol | ✅ |
+| System proxy auto-configure on macOS (`networksetup`) | ✅ |
+| Windows & Linux binaries | ✅ |
+| WebSocket frame inspection | 🚧 v1.1 |
+| Windows/Linux GUI auto-configure | 🚧 v1.1 |
 
 ---
 
 ## Installation
 
-### Download
+Grab the latest installer from the [Releases](https://github.com/slothlabsorg/proxyorbit/releases) page:
 
-Grab the latest `.dmg` from the [Releases](https://github.com/slothlabsorg/proxyorbit/releases) page.
+| Platform | Download |
+|---|---|
+| macOS Apple Silicon | `.dmg` (arm64) |
+| macOS Intel | `.dmg` (x64) |
+| Windows | `.msi` or `.exe` |
+| Linux | `.deb` or `.AppImage` |
 
-### macOS (Homebrew) — coming soon
-
-```bash
-brew install slothlabs/tap/proxyorbit
-```
-
-> **Note:** ProxyOrbit is currently macOS only. Windows and Linux support is coming soon.
+> ProxyOrbit is currently unsigned — on macOS right-click the app and choose "Open" the first time. On Windows, approve the SmartScreen prompt.
 
 ---
 
 ## Usage
 
-1. Launch ProxyOrbit
-2. Click **Start proxy** — the status badge turns green and your system proxy is set
-3. Open any browser or app and make requests as normal
-4. Watch the live request log — click any row for full detail
-5. Click **Stop proxy** to stop capturing and restore your system settings
+1. Launch ProxyOrbit.
+2. Click **Start** — the proxy listens on `127.0.0.1:8080`.
+3. On macOS with *Auto-configure system proxy* enabled, GUI apps (browsers, Postman, Slack) route traffic automatically. New terminals pick up `HTTPS_PROXY` too.
+4. Click any request row for full headers, body, Copy as cURL, Replay, or Intercept.
+
+For HTTPS request/response bodies, toggle **MITM HTTPS inspection** in Settings and install the generated CA (see below).
+
+---
+
+## Corporate / Zscaler / MDM environments
+
+On managed Macs with Zscaler, Jamf, Crowdstrike, or similar MDM tooling, `networksetup -set*proxystate on` often silently no-ops — the command exits `0` but System Settings → Network still shows proxies disabled. You'll also typically find a forced `SSL_CERT_FILE=/…/ZscalerRootCA.pem` in your environment.
+
+In this case auto-configure can't persist the GUI proxy. Use one of these escape hatches instead.
+
+### 1. Shell aliases (recommended)
+
+Add to `~/.zshrc` or `~/.bashrc` — flip the proxy on/off in any terminal with `proxyon` / `proxyoff`:
+
+```bash
+# ProxyOrbit — CLI proxy toggle (zsh / bash)
+export PROXYORBIT_CA="$HOME/.proxyorbit/ca/ca.pem"
+
+proxyon() {
+  export HTTPS_PROXY="http://127.0.0.1:8080"
+  export HTTP_PROXY="http://127.0.0.1:8080"
+  export ALL_PROXY="http://127.0.0.1:8080"
+  export https_proxy="$HTTPS_PROXY"
+  export http_proxy="$HTTP_PROXY"
+  export all_proxy="$ALL_PROXY"
+  # Trust ProxyOrbit's CA for the MITM leaf certs. If Zscaler already set
+  # SSL_CERT_FILE, stash it and restore in proxyoff.
+  [ -n "$SSL_CERT_FILE" ] && export SSL_CERT_FILE_PRE_PROXYORBIT="$SSL_CERT_FILE"
+  export SSL_CERT_FILE="$PROXYORBIT_CA"
+  export NODE_EXTRA_CA_CERTS="$PROXYORBIT_CA"
+  export REQUESTS_CA_BUNDLE="$PROXYORBIT_CA"
+  export CURL_CA_BUNDLE="$PROXYORBIT_CA"
+  echo "ProxyOrbit: ON (127.0.0.1:8080)"
+}
+
+proxyoff() {
+  unset HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy \
+        NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE
+  if [ -n "$SSL_CERT_FILE_PRE_PROXYORBIT" ]; then
+    export SSL_CERT_FILE="$SSL_CERT_FILE_PRE_PROXYORBIT"
+    unset SSL_CERT_FILE_PRE_PROXYORBIT
+  else
+    unset SSL_CERT_FILE
+  fi
+  echo "ProxyOrbit: OFF"
+}
+```
+
+### 2. Per-command with curl
+
+```bash
+curl --proxy http://127.0.0.1:8080 \
+     --cacert ~/.proxyorbit/ca/ca.pem \
+     https://api.example.com/endpoint
+```
+
+### 3. Manual GUI proxy (requires sudo, may be blocked by MDM)
+
+```bash
+sudo networksetup -setwebproxy "Wi-Fi" 127.0.0.1 8080
+sudo networksetup -setwebproxystate "Wi-Fi" on
+sudo networksetup -setsecurewebproxy "Wi-Fi" 127.0.0.1 8080
+sudo networksetup -setsecurewebproxystate "Wi-Fi" on
+networksetup -getwebproxy "Wi-Fi"  # if Enabled=No, MDM is blocking it
+```
+
+### JetBrains / VSCode terminal doesn't pick up proxy
+
+When the IDE is launched *before* ProxyOrbit, its embedded terminal inherits the old environment. Either relaunch the IDE, use the `proxyon` alias inside the IDE terminal, or launch the IDE from a shell that already has `proxyon` set.
+
+---
+
+## Per-tool proxy config
+
+### VSCode
+Settings → `http.proxy`: `http://127.0.0.1:8080`. For Node extensions also set `NODE_EXTRA_CA_CERTS` before launching VSCode.
+
+### IntelliJ / PyCharm / WebStorm / Rider
+Settings → Appearance & Behavior → System Settings → HTTP Proxy → Manual:
+`127.0.0.1:8080`, check "Also use for HTTPS". Accept the CA under *Tools → Server Certificates* the first time.
+
+### Node.js
+```bash
+NODE_EXTRA_CA_CERTS=~/.proxyorbit/ca/ca.pem
+HTTPS_PROXY=http://127.0.0.1:8080
+HTTP_PROXY=http://127.0.0.1:8080
+```
+
+### Python (requests, httpx, urllib3, aiohttp)
+```bash
+export REQUESTS_CA_BUNDLE=~/.proxyorbit/ca/ca.pem
+export HTTPS_PROXY=http://127.0.0.1:8080
+export HTTP_PROXY=http://127.0.0.1:8080
+```
+
+### AWS CLI
+```bash
+export AWS_CA_BUNDLE=~/.proxyorbit/ca/ca.pem
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+### Go
+```bash
+# net/http respects HTTPS_PROXY automatically
+export SSL_CERT_FILE=~/.proxyorbit/ca/ca.pem
+```
+
+### Postman / Insomnia
+Settings → Proxy → "Use custom proxy configuration" → `127.0.0.1:8080`.
+Either disable SSL verification or add `~/.proxyorbit/ca/ca.pem` as a trusted root.
+
+### Docker
+```bash
+docker run --rm \
+  -e HTTPS_PROXY=http://host.docker.internal:8080 \
+  -e HTTP_PROXY=http://host.docker.internal:8080 \
+  -v ~/.proxyorbit/ca/ca.pem:/usr/local/share/ca-certificates/proxyorbit.crt \
+  my-image
+```
+
+---
+
+## Installing the MITM CA
+
+After toggling on HTTPS inspection in Settings, install the CA once:
+
+**macOS**
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ~/.proxyorbit/ca/ca.pem
+```
+
+**Linux (Debian/Ubuntu)**
+```bash
+sudo cp ~/.proxyorbit/ca/ca.pem /usr/local/share/ca-certificates/proxyorbit.crt
+sudo update-ca-certificates
+```
+
+**Windows (PowerShell, admin)**
+```powershell
+Import-Certificate -FilePath "$env:USERPROFILE\.proxyorbit\ca\ca.pem" `
+  -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+Firefox keeps a separate trust store — import via Settings → Privacy & Security → Certificates → View Certificates → Authorities.
 
 ---
 
@@ -67,10 +214,9 @@ npm run tauri dev
 ```
 
 Browser dev mode (mock data, no Tauri binary):
-
 ```bash
 npm run dev
-# Open http://localhost:1423/?mock=1
+# http://localhost:1423/?mock=1
 ```
 
 ---
@@ -78,52 +224,40 @@ npm run dev
 ## Testing
 
 ```bash
-# Unit tests (Vitest)
-npm test
-
-# Playwright screenshot suite
-npm run screenshots
-```
-
-Rust unit tests:
-
-```bash
-cd src-tauri
-cargo test
+npm test              # Vitest
+npm run screenshots   # Playwright screenshots
+cd src-tauri && cargo test
 ```
 
 ---
 
-## Contributing
+## Platform support
 
-1. Fork the repo and create a branch: `git checkout -b my-feature`
-2. Make your changes and run the test suites above
-3. Open a pull request — all PRs require review before merging to `main`
-4. Direct pushes to `main` are disabled
-
-For significant changes, open an issue first to discuss the approach.
+| Platform | Proxy | Auto-configure | MITM | Notes |
+|---|---|---|---|---|
+| macOS (Apple Silicon + Intel) | ✅ | ✅ | ✅ | `launchctl setenv` for new terminals |
+| Windows | ✅ | 🚧 v1.1 | ✅ | configure HTTP_PROXY env vars manually |
+| Linux | ✅ | 🚧 v1.1 | ✅ | `.deb` declares `libwebkit2gtk-4.1-0` deps |
 
 ---
 
 ## Roadmap
 
-### v0.2
-- HTTPS MITM with certificate trust flow
-- Request replay
-- Request/response body search and highlight
-- Export captured traffic (HAR format)
-- Filter by host / path regex
+### v1.1
+- WebSocket frame inspection
+- Windows/Linux GUI auto-configure
+- Export HAR
 
-### v0.3
-- Windows and Linux support
-- Conditional breakpoints (pause and edit a request before it continues)
-- Mock responses — intercept a URL and return custom JSON
+### v1.2
+- Breakpoints with conditional matchers
+- Mock responses (rewrite rules)
+- Session persistence across launches
 
 ---
 
 ## Support the project
 
-ProxyOrbit is free and built on nights and weekends. If it saves you time, consider supporting continued development:
+ProxyOrbit is free and built on nights and weekends. If it saves you time:
 
 - [Ko-fi](https://ko-fi.com/slothlabs)
 - [GitHub Sponsors](https://github.com/sponsors/slothlabsorg)

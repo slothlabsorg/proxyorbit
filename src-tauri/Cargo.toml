@@ -1,6 +1,6 @@
 [package]
 name = "proxyorbit"
-version = "0.1.0"
+version = "1.0.0"
 description = "ProxyOrbit — HTTP/HTTPS proxy inspector"
 authors = ["SlothLabs"]
 edition = "2021"
@@ -26,6 +26,17 @@ uuid         = { version = "1", features = ["v4"] }
 chrono       = { version = "0.4", features = ["serde"] }
 anyhow       = "1"
 dirs         = "5"
+
+# MITM HTTPS inspection: generate a self-signed CA on first run and mint
+# per-host leaf certs on the fly. The proxy accepts the client's TLS with
+# the leaf cert (user trusts our CA) and opens a separate TLS to the real
+# server — enabling header / body inspection for HTTPS traffic.
+rcgen          = { version = "0.13", features = ["pem"] }
+rustls         = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls   = { version = "0.26", default-features = false, features = ["ring"] }
+rustls-pki-types = "1"
+pem            = "3"
+time           = "0.3"
 
 [profile.release]
 panic        = "abort"

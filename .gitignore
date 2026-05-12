@@ -31,3 +31,7 @@ src-tauri/gen/
 .vscode/settings.json
 .idea/
 *.swp
+
+# Stray screenshot imports and local screenshot captures
+/img*.png
+/screenshots/

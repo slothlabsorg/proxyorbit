@@ -117,6 +117,9 @@ export function Settings() {
             </div>
           </Section>
 
+          {/* HTTPS MITM */}
+          <HttpsMitmSection />
+
           {/* Save */}
           <div className="flex items-center gap-3 pt-2">
             <Button variant="primary" onClick={handleSave}>Save Settings</Button>
@@ -170,5 +173,135 @@ function Toggle({
 
 // Need React import for Section JSX
 import React from 'react'
+
+/**
+ * HTTPS MITM controls. The UI walks the user through enabling the CA
+ * (download / install / trust), shows the on-disk path, and lets them
+ * opt hosts out of interception for cert-pinned apps.
+ *
+ * In mock mode the toggle is a no-op so tests can snapshot the UI without
+ * needing a real Rust backend.
+ */
+function HttpsMitmSection() {
+  const [enabled, setEnabled] = React.useState(false)
+  const [caPath, setCaPath] = React.useState<string | null>(null)
+  const [caPem, setCaPem] = React.useState<string | null>(null)
+  const [copied, setCopied] = React.useState(false)
+
+  React.useEffect(() => {
+    if (URL_MOCK) { setCaPath('~/.proxyorbit/ca/ca.pem'); return }
+    api.getProxyStatus().then(s => setEnabled(s.mitm_enabled)).catch(() => {})
+    api.getCaPemPath().then(setCaPath).catch(() => {})
+  }, [])
+
+  const toggle = async (v: boolean) => {
+    setEnabled(v)
+    if (URL_MOCK) return
+    try {
+      await api.setMitmEnabled(v)
+      if (v && caPath === null) setCaPath(await api.getCaPemPath())
+    } catch (e) {
+      setEnabled(!v) // revert on error
+      console.error('set_mitm_enabled failed:', e)
+    }
+  }
+
+  const showPem = async () => {
+    if (URL_MOCK) {
+      setCaPem('-----BEGIN CERTIFICATE-----\n(mock CA — enable in a real run)\n-----END CERTIFICATE-----')
+      return
+    }
+    try { setCaPem(await api.getCaPem()) } catch (e) { console.error(e) }
+  }
+
+  const copyPem = async () => {
+    if (!caPem) return
+    try { await navigator.clipboard.writeText(caPem); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* denied */ }
+  }
+
+  return (
+    <Section
+      title="HTTPS Inspection (MITM)"
+      description="Decrypt HTTPS traffic with a local root CA you trust once. Required to inspect headers/body of API calls to GitHub, OpenAI, your own APIs, etc."
+    >
+      <div className="space-y-3">
+        <Toggle
+          label="Enable HTTPS inspection"
+          description="Generates a local root CA the first time it's turned on."
+          value={enabled}
+          onChange={toggle}
+        />
+        {caPath && (
+          <div className="rounded-lg border border-border bg-bg-surface p-3 space-y-2">
+            <div>
+              <p className="text-text-primary text-[11px] font-semibold">Install the ProxyOrbit root CA</p>
+              <p className="text-text-muted text-[10px] mt-0.5">
+                Without this, your browser / OS will refuse the MITM'd TLS connections.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] font-mono text-text-secondary bg-bg-base border border-border-subtle rounded px-2 py-1 truncate">{caPath}</code>
+              <Button variant="secondary" size="sm" onClick={showPem}>
+                {caPem ? 'Shown' : 'Show PEM'}
+              </Button>
+            </div>
+            {caPem && (
+              <>
+                <pre className="text-[10px] font-mono text-text-secondary bg-bg-base border border-border-subtle rounded px-2 py-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">
+                  {caPem}
+                </pre>
+                <Button variant="secondary" size="sm" onClick={copyPem}>
+                  {copied ? '✓ Copied' : 'Copy PEM'}
+                </Button>
+              </>
+            )}
+            <details className="text-[11px] text-text-secondary">
+              <summary className="cursor-pointer text-text-muted hover:text-text-primary">
+                Install instructions ▾
+              </summary>
+              <div className="mt-2 space-y-2 pl-2">
+                <div>
+                  <p className="font-semibold text-text-primary">macOS</p>
+                  <code className="block text-[10px] font-mono bg-bg-base border border-border-subtle rounded px-2 py-1 mt-1 whitespace-nowrap overflow-auto">
+                    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {caPath}
+                  </code>
+                  <p className="text-[10px] text-text-muted mt-1">
+                    Or: open Keychain Access → File → Import Items → select the file above →
+                    drag it to <strong>System</strong> → double-click → expand Trust → "Always Trust".
+                  </p>
+                </div>
+                <div>
+                  <p className="font-semibold text-text-primary">Linux</p>
+                  <code className="block text-[10px] font-mono bg-bg-base border border-border-subtle rounded px-2 py-1 mt-1 whitespace-nowrap overflow-auto">
+                    sudo cp {caPath} /usr/local/share/ca-certificates/proxyorbit.crt && sudo update-ca-certificates
+                  </code>
+                </div>
+                <div>
+                  <p className="font-semibold text-text-primary">Windows</p>
+                  <code className="block text-[10px] font-mono bg-bg-base border border-border-subtle rounded px-2 py-1 mt-1 whitespace-nowrap overflow-auto">
+                    certutil -addstore -user "ROOT" {caPath}
+                  </code>
+                </div>
+                <div>
+                  <p className="font-semibold text-text-primary">Firefox / Node.js / cURL</p>
+                  <p className="text-[10px] text-text-muted">
+                    Firefox has its own trust store — about:preferences#privacy → Certificates → Import.
+                    Node.js: <code className="text-text-secondary">NODE_EXTRA_CA_CERTS={caPath}</code>.
+                    cURL: <code className="text-text-secondary">curl --cacert {caPath}</code>.
+                  </p>
+                </div>
+              </div>
+            </details>
+          </div>
+        )}
+        <p className="text-[10px] text-text-muted">
+          Some apps use certificate pinning (banking, some mobile SDKs) and will
+          refuse our substituted cert. Add them to the exclude list above to keep
+          them on the blind-tunnel path.
+        </p>
+      </div>
+    </Section>
+  )
+}
 
 export default Settings
