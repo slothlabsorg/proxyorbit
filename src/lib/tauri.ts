@@ -37,6 +37,11 @@ export const api = {
   setSystemProxy: (port: number) => invoke<void>('set_system_proxy', { port }),
   unsetSystemProxy: () => invoke<void>('unset_system_proxy'),
   getNetworkService: () => invoke<string>('get_network_service'),
+  // Orphan-detect / recovery: launchctl env vars survive an unclean shutdown
+  // (SIGKILL, panic, OS crash). On boot we check + clear so the next
+  // terminal isn't routed at a dead 127.0.0.1:8080.
+  hasOrphanedProxyEnv: () => invoke<boolean>('has_orphaned_proxy_env'),
+  forceClearProxyEnv: () => invoke<void>('force_clear_proxy_env'),
 
   // Settings
   getSettings: () => invoke<ProxySettings>('get_settings'),

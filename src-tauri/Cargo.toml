@@ -26,6 +26,10 @@ uuid         = { version = "1", features = ["v4"] }
 chrono       = { version = "0.4", features = ["serde"] }
 anyhow       = "1"
 dirs         = "5"
+# Cross-platform signal handler so SIGTERM / SIGINT clean up launchd env
+# vars before the process dies. Tauri's RunEvent::Exit only fires for the
+# graceful Cmd+Q / window-close path; signal-killed processes skip it.
+ctrlc        = { version = "3", features = ["termination"] }
 
 # MITM HTTPS inspection: generate a self-signed CA on first run and mint
 # per-host leaf certs on the fly. The proxy accepts the client's TLS with

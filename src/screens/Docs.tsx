@@ -80,6 +80,36 @@ sudo networksetup -setsecurewebproxystate "Wi-Fi" on
 networksetup -getwebproxy "Wi-Fi"`}</Code>
           </DocSection>
 
+          <DocSection title="App crashed and now my terminals can't reach the network">
+            <p className="text-text-secondary text-[13px] mb-2">
+              If ProxyOrbit is killed unexpectedly (panic, SIGKILL, OS shutdown
+              before the cleanup hook runs), the launchd <code className="font-mono">HTTP_PROXY</code> /
+              {' '}<code className="font-mono">HTTPS_PROXY</code> / <code className="font-mono">ALL_PROXY</code> env vars
+              stay set and every new process tries to route through a dead
+              <code className="font-mono"> 127.0.0.1:8080</code>.
+            </p>
+            <p className="text-text-secondary text-[13px] mb-2">
+              Self-heal: just relaunch ProxyOrbit. On startup it detects
+              orphaned proxy env vars and clears them automatically (see the
+              console log line <code className="font-mono">cleaning orphaned HTTP_PROXY…</code>).
+            </p>
+            <p className="text-text-secondary text-[13px] mb-2">
+              Manual fix from any terminal:
+            </p>
+            <pre className="p-3 rounded-lg bg-bg-surface border border-border font-mono text-[11px] text-text-secondary whitespace-pre-wrap leading-relaxed">{`for k in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+  launchctl unsetenv "$k"
+done
+# Then quit and relaunch already-open terminals / IDEs.`}</pre>
+            <p className="text-text-secondary text-[13px] mt-2">
+              CA-trust env vars (<code className="font-mono">NODE_EXTRA_CA_CERTS</code>,{' '}
+              <code className="font-mono">SSL_CERT_FILE</code>, etc.) are deliberately
+              left in place when the app dies — they&apos;re additive, the
+              referenced PEM file still exists on disk, and clearing them
+              could push Node tools off whatever VPN/corporate trust chain
+              you had layered.
+            </p>
+          </DocSection>
+
           <DocSection title="JetBrains / VSCode terminal doesn't pick up proxy">
             <p className="text-text-secondary text-[13px] mb-2">
               When the app is launched <em>before</em> ProxyOrbit starts, its embedded terminal

@@ -49,6 +49,21 @@ export default function App() {
         setEntries(entries)
         setProxyRunStatus(status.running ? 'running' : 'stopped')
 
+        // Orphan-detect: if the proxy isn't running but launchctl still has
+        // HTTP_PROXY=127.0.0.1:8080 left over from a previous crashed
+        // session, clear it now. Otherwise every new terminal/IDE this user
+        // opens points at a dead port and times out. CA-trust env vars are
+        // NOT cleared — they're additive and harmless when the proxy is off.
+        if (!status.running) {
+          api.hasOrphanedProxyEnv().then(orphan => {
+            if (orphan) {
+              // eslint-disable-next-line no-console
+              console.warn('[proxyorbit] cleaning orphaned HTTP_PROXY/HTTPS_PROXY/ALL_PROXY from launchd (previous session crashed)')
+              api.forceClearProxyEnv().catch(() => {})
+            }
+          }).catch(() => {})
+        }
+
         // Subscribe to real-time events. React StrictMode in dev double-mounts
         // the effect so we could wind up with two listeners on the same event;
         // dedup by id as a belt-and-suspenders guard. Bounded to MAX entries.

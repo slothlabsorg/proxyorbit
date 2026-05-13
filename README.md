@@ -122,6 +122,22 @@ sudo networksetup -setsecurewebproxystate "Wi-Fi" on
 networksetup -getwebproxy "Wi-Fi"  # if Enabled=No, MDM is blocking it
 ```
 
+### App crashed and terminals can't reach the network
+
+ProxyOrbit clears its launchd proxy URL env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and lowercase) on graceful exit and on SIGTERM/SIGINT. If it's killed by SIGKILL, panic, or OS shutdown before the hook runs, those vars survive and every new process routes through a dead `127.0.0.1:8080`.
+
+**Self-heal:** relaunch ProxyOrbit. On boot it detects orphaned env vars and clears them automatically.
+
+**Manual fix:**
+```bash
+for k in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+  launchctl unsetenv "$k"
+done
+# Then relaunch any already-open terminals / IDEs.
+```
+
+CA-trust env vars (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, …) are deliberately left in place when the app dies — they're additive, the referenced PEM file still exists, and clearing them could push Node tools off whatever VPN/corporate trust chain you had layered.
+
 ### JetBrains / VSCode terminal doesn't pick up proxy
 
 When the IDE is launched *before* ProxyOrbit, its embedded terminal inherits the old environment. Either relaunch the IDE, use the `proxyon` alias inside the IDE terminal, or launch the IDE from a shell that already has `proxyon` set.

@@ -101,6 +101,51 @@ pub fn set_system_proxy(port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// Proxy-URL env vars: the dangerous ones to leave dangling. If the app
+/// dies and these stay set, every newly-spawned process tries to route
+/// through 127.0.0.1:8080 and gets ECONNREFUSED — which breaks browsers,
+/// terminals, IDEs, and corporate VPN-dependent tools.
+pub(crate) const PROXY_URL_ENV_KEYS: &[&str] = &[
+    "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy",
+    "ALL_PROXY", "all_proxy",
+];
+
+/// CA-trust env vars: additive (NODE_EXTRA_CA_CERTS) or pointing at a file
+/// path that still exists after the app dies. Safe to leave set across an
+/// unclean shutdown — Node/curl/python will simply continue trusting our
+/// CA in addition to (or in place of, for the *_BUNDLE ones) the system
+/// roots, which is harmless when no traffic is being intercepted. We only
+/// clear these on a graceful unset (user toggled the proxy off), never on
+/// crash-exit, so Node tools don't suddenly find themselves outside the
+/// corporate VPN's trust chain.
+pub(crate) const CA_ENV_KEYS: &[&str] = &[
+    "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+];
+
+/// All keys we ever set — used by graceful unset only.
+fn all_env_keys() -> impl Iterator<Item = &'static str> {
+    PROXY_URL_ENV_KEYS.iter().chain(CA_ENV_KEYS.iter()).copied()
+}
+
+/// Drop the proxy-URL env vars without prompting for admin. Safe to call
+/// from any context (signal handler, RunEvent::Exit, startup orphan-detect).
+/// Idempotent. Does NOT touch CA-trust vars (those are harmless when stale)
+/// and does NOT touch networksetup state (requires admin we can't prompt
+/// for during shutdown).
+pub(crate) fn clear_proxy_url_env_vars() {
+    for k in PROXY_URL_ENV_KEYS {
+        let _ = Command::new("/bin/launchctl").args(["unsetenv", k]).output();
+    }
+}
+
+/// Full graceful clear — both proxy URLs and CA trust. Only used when the
+/// user explicitly toggles the proxy off, never on shutdown.
+pub(crate) fn clear_all_proxyorbit_env_vars() {
+    for k in all_env_keys() {
+        let _ = Command::new("/bin/launchctl").args(["unsetenv", k]).output();
+    }
+}
+
 #[tauri::command]
 pub fn unset_system_proxy() -> Result<(), String> {
     let service = get_active_service();
@@ -116,14 +161,48 @@ pub fn unset_system_proxy() -> Result<(), String> {
     );
     let _ = run_elevated_with_output(&cmd);
 
-    // User-level half — drop launchd env vars. Idempotent.
-    for k in [
-        "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy",
-        "ALL_PROXY", "all_proxy",
-        "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
-    ] {
-        let _ = Command::new("/bin/launchctl").args(["unsetenv", k]).output();
+    // User-level half — graceful, full clear (both proxy URLs and CA trust).
+    clear_all_proxyorbit_env_vars();
+    Ok(())
+}
+
+/// Called from the Tauri RunEvent::Exit hook and from a SIGTERM/SIGINT
+/// handler. Only the proxy-URL vars are cleared — leaving NODE_EXTRA_CA_CERTS
+/// / SSL_CERT_FILE etc. intact across a crash is harmless (the CA file is
+/// still on disk) and avoids surprising tools that then suddenly find
+/// themselves outside whatever extra trust chain we configured.
+pub fn cleanup_on_exit() {
+    eprintln!("[proxyorbit] cleanup_on_exit: clearing launchd HTTP_PROXY / HTTPS_PROXY / ALL_PROXY (CA trust env preserved)");
+    clear_proxy_url_env_vars();
+}
+
+/// True if any of our proxy-URL env vars is currently set in launchd's
+/// user domain. Used on startup to detect orphaned state from a previous
+/// crash. We deliberately don't check the CA-trust vars — those aren't
+/// dangerous to leave set, so their presence isn't an "orphan" condition.
+#[tauri::command]
+pub fn has_orphaned_proxy_env() -> bool {
+    for k in PROXY_URL_ENV_KEYS {
+        let out = Command::new("/bin/launchctl")
+            .args(["getenv", k])
+            .output();
+        if let Ok(o) = out {
+            // launchctl getenv prints the value + newline if set, empty if not.
+            if !o.stdout.is_empty() && o.status.success() {
+                return true;
+            }
+        }
     }
+    false
+}
+
+/// Force-clear our launchd proxy-URL env vars without admin. Safe to call
+/// any time. CA-trust vars are NOT touched — they're harmless to leave set,
+/// and clearing them could surprise tools (especially Node) that were
+/// relying on them to trust corporate roots layered on top.
+#[tauri::command]
+pub fn force_clear_proxy_env() -> Result<(), String> {
+    clear_proxy_url_env_vars();
     Ok(())
 }
 
