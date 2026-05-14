@@ -36,7 +36,7 @@ export function StatusBar({ proxyStatus, entryCount, filteredCount }: StatusBarP
         {filteredCount === entryCount && (
           <span className="text-text-muted text-[11px]">{entryCount} requests</span>
         )}
-        <span className="text-text-muted text-[11px]">ProxyOrbit v0.1.0</span>
+        <span className="text-text-muted text-[11px]">ProxyOrbit v{__APP_VERSION__}</span>
       </div>
     </div>
   )

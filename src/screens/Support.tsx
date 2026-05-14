@@ -45,7 +45,7 @@ export function Support() {
           </div>
 
           <div className="text-center text-text-muted text-[11px] pt-2">
-            ProxyOrbit v0.1.0 · © 2025 SlothLabs
+            ProxyOrbit v{__APP_VERSION__} · © 2026 SlothLabs
           </div>
         </div>
       </div>

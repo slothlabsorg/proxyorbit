@@ -354,8 +354,9 @@ function OverviewTab({ entry }: { entry: ProxyEntry }) {
       </div>
       {entry.kind === 'connect' && (
         <div className="bg-bg-surface border border-border rounded-lg p-3 text-[11px] text-text-muted leading-relaxed">
-          HTTPS tunnel — headers and body are end-to-end encrypted and not
-          captured. Inspection requires a MITM CA trust, planned for v1.1.
+          HTTPS tunnel — without MITM, headers and body are end-to-end
+          encrypted and not captured. Enable HTTPS Inspection in Settings
+          and trust the generated CA to see decrypted traffic.
         </div>
       )}
     </div>
