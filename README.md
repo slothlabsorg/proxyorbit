@@ -1,6 +1,20 @@
-# ProxyOrbit
+<div align="center">
+  <h1>🔍 ProxyOrbit — Free Charles Proxy Alternative for macOS</h1>
+  <p><strong>The free, native HTTP/HTTPS proxy inspector for developers. Capture traffic from any Mac app, filter by method/status, inspect requests in real time, replay and modify — without Charles, without Proxyman, without a subscription.</strong></p>
 
-**HTTP/HTTPS proxy inspector for developers.** Run a local intercepting proxy, watch every request in real time, inspect headers and bodies, replay, intercept, and modify — without Wireshark, without Charles, without a subscription.
+  [![Release](https://img.shields.io/github/v/release/slothlabsorg/proxyorbit?style=flat-square)](https://github.com/slothlabsorg/proxyorbit/releases)
+  [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg?style=flat-square)](LICENSE)
+  [![GitHub Sponsors](https://img.shields.io/github/sponsors/slothlabsorg?style=flat-square&logo=github&color=pink)](https://github.com/sponsors/slothlabsorg)
+  [![Website](https://img.shields.io/badge/web-slothlabs.org-94A3B8?style=flat-square)](https://slothlabs.org/proxyorbit)
+</div>
+
+---
+
+## What is ProxyOrbit?
+
+**ProxyOrbit is a free Charles Proxy alternative for macOS.** Run a local intercepting proxy, watch every HTTP/HTTPS request in real time, inspect headers and bodies, replay, intercept and modify — all from a clean native UI.
+
+If you've been paying $50 for **Charles Proxy** or $69/year for **Proxyman**, ProxyOrbit replaces both with a native Rust app that uses < 30 MB of RAM at idle. The proxy engine is built on Hyper + Tokio (no Java, no Electron, no Chromium), and the UI shows process attribution so you know exactly which Mac app made each request.
 
 Part of the [SlothLabs](https://slothlabs.org) family — native Rust, free forever.
 
@@ -271,13 +285,40 @@ cd src-tauri && cargo test
 
 ---
 
+## We need your help 🙏
+
+ProxyOrbit is built solo on nights and weekends. Concrete things contributors can pick up:
+
+- 🦀 **Rust contributors** — breakpoint engine, conditional matchers, response rewriting
+- ⚛️ **React contributors** — diff view for replays, request curl-export polish
+- 🪟 **Windows port** — system proxy hookup via `netsh winhttp`
+- 🐧 **Linux port** — system proxy via `gsettings` / `kwriteconfig`
+- 📝 **Docs** — HTTPS cert install guides for non-macOS platforms
+- 🧪 **Beta testers** — particularly with Node.js / Python / Go HTTP clients
+
+Pick anything labeled `good-first-issue` or `help-wanted` on the [tracker](https://github.com/slothlabsorg/proxyorbit/issues).
+
+---
+
 ## Support the project
 
 ProxyOrbit is free and built on nights and weekends. If it saves you time:
 
-- [Ko-fi](https://ko-fi.com/slothlabs)
-- [GitHub Sponsors](https://github.com/sponsors/slothlabsorg)
-- [Polar.sh](https://polar.sh/slothlabs)
+- ☕ [Ko-fi](https://ko-fi.com/slothlabs)
+- ❤️ [GitHub Sponsors](https://github.com/sponsors/slothlabsorg)
+- ⭐ [Polar.sh](https://polar.sh/slothlabs)
+
+---
+
+## Other SlothLabs tools
+
+| | | |
+|---|---|---|
+| ☁️ [CloudOrbit](https://slothlabs.org/cloudorbit) | AWS client UI for macOS · SSO, EKS, kubeconfig | macOS · Win · Linux |
+| ⚡ [WattsOrbit](https://slothlabs.org/wattsorbit) | Mac power monitor for the menu bar | macOS · Win · Linux |
+| 🗄️ [DataOrbit](https://slothlabs.org/dataorbit) | Native DynamoDB GUI · live streams, cross-table joins | macOS · Win · Linux |
+| 🔐 [BastionOrbit](https://slothlabs.org/bastionorbit) | SSH tunnel manager with auto-expiry TTL | macOS · Win · Linux |
+| 🧜 [Mermaid Preview](https://slothlabs.org/mermaid-preview) | Mermaid IntelliJ / JetBrains plugin | All JetBrains IDEs |
 
 ---
 
