@@ -1,3 +1,4 @@
+import React from 'react'
 import { motion } from 'framer-motion'
 import type { Screen } from '@/types'
 import type { ProxyRunStatus } from '@/components/ui/Badge'
@@ -11,6 +12,7 @@ interface SidebarProps {
   proxyRunStatus: ProxyRunStatus
   requestCount: number
   onToggleProxy: () => void
+  newsUnread?: number
 }
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
@@ -69,10 +71,20 @@ function IconPower() {
   )
 }
 
+function IconNews() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-2 2zm0 0a2 2 0 01-2-2v-9c0-1.1.9-2 2-2h2"/>
+      <path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/>
+    </svg>
+  )
+}
+
 // ── Nav definitions ────────────────────────────────────────────────────────────
 
 const topNav = [
   { id: 'home' as Screen, label: 'Capture', icon: <IconCapture /> },
+  { id: 'news' as Screen, label: 'News',    icon: <IconNews /> },
 ]
 
 const bottomNav = [
@@ -85,7 +97,7 @@ const bottomNav = [
 
 export function Sidebar({
   screen, onNavigate, collapsed, onToggleCollapse,
-  proxyRunStatus, requestCount, onToggleProxy,
+  proxyRunStatus, requestCount, onToggleProxy, newsUnread = 0,
 }: SidebarProps) {
   const w = collapsed ? 48 : 200
   const isRunning = proxyRunStatus === 'running'
@@ -99,27 +111,15 @@ export function Sidebar({
       {/* Top nav */}
       <div className="py-2 border-b border-border-subtle flex-shrink-0">
         {topNav.map(item => (
-          <button
+          <NavButton
             key={item.id}
-            onClick={() => onNavigate(item.id)}
-            className={`flex items-center gap-3 w-full transition-colors rounded-lg mx-1 px-3 py-1.5 ${
-              screen === item.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
-            }`}
-            style={{ width: 'calc(100% - 8px)' }}
-            title={collapsed ? item.label : undefined}
-          >
-            <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">{item.icon}</span>
-            {!collapsed && (
-              <span className="flex-1 text-xs font-medium whitespace-nowrap">{item.label}</span>
-            )}
-            {!collapsed && item.id === 'home' && requestCount > 0 && (
-              <span className="text-[10px] bg-bg-overlay text-text-muted rounded-full px-1.5 py-0.5 font-mono">
-                {requestCount > 999 ? '999+' : requestCount}
-              </span>
-            )}
-          </button>
+            item={item}
+            active={screen === item.id}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+            badge={item.id === 'news' && newsUnread > 0 ? newsUnread : undefined}
+            countBadge={item.id === 'home' && requestCount > 0 ? requestCount : undefined}
+          />
         ))}
       </div>
 
@@ -157,28 +157,15 @@ export function Sidebar({
 
       {/* Bottom nav */}
       <div className="py-2 border-t border-border-subtle flex-shrink-0">
-        {bottomNav.map(item => {
-          const isSupport = item.id === 'support'
-          const isActive = screen === item.id
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              className={`flex items-center gap-3 w-full transition-colors rounded-lg mx-1 px-3 py-2 ${
-                isActive
-                  ? isSupport ? 'bg-rose-500/10 text-rose-400' : 'bg-primary/10 text-primary'
-                  : isSupport
-                    ? 'text-rose-400/70 hover:text-rose-400 hover:bg-rose-500/10'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
-              }`}
-              style={{ width: 'calc(100% - 8px)' }}
-              title={collapsed ? item.label : undefined}
-            >
-              <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">{item.icon}</span>
-              {!collapsed && <span className="text-sm font-medium whitespace-nowrap">{item.label}</span>}
-            </button>
-          )
-        })}
+        {bottomNav.map(item => (
+          <NavButton
+            key={item.id}
+            item={item}
+            active={screen === item.id}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
+        ))}
 
         <button
           onClick={onToggleCollapse}
@@ -193,6 +180,51 @@ export function Sidebar({
         </button>
       </div>
     </motion.div>
+  )
+}
+
+function NavButton({ item, active, collapsed, onNavigate, badge, countBadge }: {
+  item: { id: Screen; label: string; icon: React.ReactNode }
+  active: boolean
+  collapsed: boolean
+  onNavigate: (screen: Screen) => void
+  badge?: number
+  countBadge?: number
+}) {
+  const isSupport = item.id === 'support'
+  return (
+    <button
+      onClick={() => onNavigate(item.id)}
+      className={`flex items-center gap-3 w-full transition-colors rounded-lg mx-1 px-3 py-2 ${
+        active
+          ? isSupport ? 'bg-rose-500/10 text-rose-400' : 'bg-primary/10 text-primary'
+          : isSupport
+            ? 'text-rose-400/70 hover:text-rose-400 hover:bg-rose-500/10'
+            : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
+      }`}
+      style={{ width: 'calc(100% - 8px)' }}
+      title={collapsed ? item.label : undefined}
+    >
+      <span className="relative flex-shrink-0 w-4 h-4 flex items-center justify-center">
+        {item.icon}
+        {badge !== undefined && badge > 0 && (
+          <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary border border-bg-elevated" />
+        )}
+      </span>
+      {!collapsed && (
+        <span className="text-sm font-medium whitespace-nowrap overflow-hidden flex-1">{item.label}</span>
+      )}
+      {!collapsed && badge !== undefined && badge > 0 && !active && (
+        <span className="ml-auto text-[9px] font-mono bg-primary/15 text-primary rounded px-1 py-0.5 flex-shrink-0">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+      {!collapsed && countBadge !== undefined && countBadge > 0 && (
+        <span className="text-[10px] bg-bg-overlay text-text-muted rounded-full px-1.5 py-0.5 font-mono flex-shrink-0">
+          {countBadge > 999 ? '999+' : countBadge}
+        </span>
+      )}
+    </button>
   )
 }
 

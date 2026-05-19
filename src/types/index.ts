@@ -1,4 +1,4 @@
-export type Screen = 'home' | 'settings' | 'docs' | 'support'
+export type Screen = 'home' | 'news' | 'settings' | 'docs' | 'support'
 
 /** Matches the tuple form serialised by the Rust side — `Vec<(String, String)>`. */
 export type HeaderList = Array<[string, string]>

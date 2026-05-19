@@ -364,7 +364,7 @@ test.describe('Status bar', () => {
 
   test('status bar shows version', async ({ page }) => {
     await goto(page, 'home')
-    const version = page.getByText(/v0\.1\.0/i).first()
+    const version = page.getByText(/v1\.0\.0/i).first()
     await expect(version).toBeVisible()
   })
 })
@@ -548,14 +548,14 @@ test.describe('Docs screen', () => {
     await expect(page.getByText('Quick Start').first()).toBeVisible()
   })
 
-  test('renders HTTPS Interception section', async ({ page }) => {
+  test('renders HTTPS body inspection (MITM) section', async ({ page }) => {
     await goto(page, 'docs')
-    await expect(page.getByText('HTTPS Interception').first()).toBeVisible()
+    await expect(page.getByText(/HTTPS body inspection/i).first()).toBeVisible()
   })
 
-  test('renders Manual System Proxy section', async ({ page }) => {
+  test('renders Corporate / Zscaler / MDM section', async ({ page }) => {
     await goto(page, 'docs')
-    await expect(page.getByText('Manual System Proxy').first()).toBeVisible()
+    await expect(page.getByText(/Corporate.*Zscaler.*MDM/i).first()).toBeVisible()
   })
 
   test('renders Filters section', async ({ page }) => {
@@ -586,7 +586,7 @@ test.describe('Support screen', () => {
 
   test('shows ProxyOrbit version', async ({ page }) => {
     await goto(page, 'support')
-    await expect(page.getByText(/v0\.1\.0/i).first()).toBeVisible()
+    await expect(page.getByText(/v1\.0\.0/i).first()).toBeVisible()
   })
 
   test('shows tech stack badges', async ({ page }) => {

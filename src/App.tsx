@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { Screen, ProxyEntry, ProxyStatus, InterceptPayload } from '@/types'
 import type { ProxyRunStatus } from '@/components/ui/Badge'
 import { api } from '@/lib/tauri'
@@ -8,14 +8,24 @@ import { Home } from '@/screens/Home'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
-import { UpdateBanner } from '@/components/ui/UpdateBanner'
+import { News } from '@/screens/News'
+import { UpdaterModal } from '@/components/UpdaterModal'
 import { InterceptModal } from '@/components/ui/InterceptModal'
+import { getUnreadIds, markRead, loadNews } from '@/lib/news'
+import { MOCK_FEED } from '@/data/news-mock'
+import type { NewsItem } from '@/types/news'
 
 function getUrlParam(key: string): string | null {
   try { return new URL(window.location.href).searchParams.get(key) } catch { return null }
 }
-const URL_SCREEN = (getUrlParam('screen') as Screen | null) ?? 'home'
-const URL_MOCK   = getUrlParam('mock') === '1'
+const URL_SCREEN      = (getUrlParam('screen') as Screen | null) ?? 'home'
+const URL_MOCK        = getUrlParam('mock') === '1'
+const URL_UPDATER     = getUrlParam('updater') === '1'
+const URL_MOCK_NEWS   = getUrlParam('mockNews') === '1' || getUrlParam('news') === '1'
+const URL_MOCK_UPDATE = getUrlParam('mockUpdate') === '1'
+const URL_MOCK_UPDATE_VER = getUrlParam('mockUpdateVersion') ?? '1.0.1'
+
+function validItem(i: NewsItem) { return !i.expiresAt || new Date(i.expiresAt).getTime() > Date.now() }
 
 export default function App() {
   const [screen, setScreen]               = useState<Screen>(URL_SCREEN)
@@ -29,6 +39,51 @@ export default function App() {
   const [interceptQueue, setInterceptQueue] = useState<InterceptPayload[]>([])
   const unlistenRef = useRef<(() => void) | null>(null)
   const unlistenInterceptRef = useRef<(() => void) | null>(null)
+
+  // Updater state — dismissed is persisted per-version so reload doesn't re-show modal
+  const [hasUpdate, setHasUpdate] = useState(URL_MOCK_UPDATE)
+  const [updateVersion, setUpdateVersion] = useState(URL_MOCK_UPDATE ? URL_MOCK_UPDATE_VER : '')
+  const [updaterDismissed, setUpdaterDismissed] = useState(() => {
+    const v = URL_MOCK_UPDATE ? URL_MOCK_UPDATE_VER : ''
+    if (!v) return false
+    try { return localStorage.getItem('proxyorbit.updaterDismissed') === v } catch { return false }
+  })
+
+  // News state — only load mock items when ?mockNews=1; skip real fetch in any ?mock=1 context
+  const [newsItems, setNewsItems] = useState<NewsItem[]>(() =>
+    URL_MOCK_NEWS ? MOCK_FEED.items.filter(validItem) : []
+  )
+  const [newsUnread, setNewsUnread] = useState(() =>
+    URL_MOCK_NEWS ? getUnreadIds(MOCK_FEED.items.filter(validItem)).length : 0
+  )
+
+  // Load real news only when not in any mock or test context
+  useEffect(() => {
+    if (!URL_MOCK && !URL_MOCK_NEWS) {
+      loadNews().then(items => {
+        setNewsItems(items)
+        setNewsUnread(getUnreadIds(items).length)
+      }).catch(() => {})
+    }
+  }, [])
+
+  // Bell items: synthetic update entry (when dismissed) + one item per kind from news
+  const bellItems = useMemo(() => {
+    type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
+    const items: BellItem[] = []
+    if (hasUpdate && updaterDismissed) {
+      items.push({ id: 'update-available', kind: 'update-available', title: `v${updateVersion} is available`, body: 'Click to install the latest update', date: new Date().toISOString() })
+    }
+    // At most one item per kind so the dropdown stays clean
+    const seen = new Set<string>()
+    for (const n of newsItems.filter(i => i.type !== 'ad')) {
+      const kind = n.type === 'changelog' ? 'release' : 'announcement'
+      if (seen.has(kind)) continue
+      seen.add(kind)
+      items.push({ id: n.id, kind, title: n.title, body: n.body.split('\n').filter(Boolean)[0] ?? '', date: n.publishedAt, url: n.action?.url })
+    }
+    return items
+  }, [newsItems, hasUpdate, updaterDismissed, updateVersion])
 
   // Initialize
   useEffect(() => {
@@ -175,35 +230,80 @@ export default function App() {
     )
   }
 
+  const renderScreen = () => {
+    switch (screen) {
+      case 'home':
+        return (
+          <Home
+            entries={entries}
+            isRunning={proxyRunStatus === 'running'}
+            onClear={handleClear}
+            onDelete={handleDelete}
+            onStartProxy={handleToggleProxy}
+          />
+        )
+      case 'news':
+        return <News onVisit={() => {
+          setNewsUnread(0)
+          markRead(newsItems.map(i => i.id))
+        }} />
+      case 'settings':
+        return <Settings />
+      case 'docs':
+        return <Docs />
+      case 'support':
+        return <Support />
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <UpdateBanner />
-      <div className="flex-1 min-h-0">
-        <Shell
-          screen={screen}
-          onNavigate={setScreen}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed(c => !c)}
-          proxyStatus={proxyStatus}
-          proxyRunStatus={proxyRunStatus}
-          entryCount={entries.length}
-          filteredCount={entries.length}
-          onToggleProxy={handleToggleProxy}
-        >
-          {screen === 'home' && (
-            <Home
-              entries={entries}
-              isRunning={proxyRunStatus === 'running'}
-              onClear={handleClear}
-              onDelete={handleDelete}
-              onStartProxy={handleToggleProxy}
-            />
-          )}
-          {screen === 'settings' && <Settings />}
-          {screen === 'docs'     && <Docs />}
-          {screen === 'support'  && <Support />}
-        </Shell>
-      </div>
+      <Shell
+        screen={screen}
+        onNavigate={setScreen}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+        proxyStatus={proxyStatus}
+        proxyRunStatus={proxyRunStatus}
+        entryCount={entries.length}
+        filteredCount={entries.length}
+        onToggleProxy={handleToggleProxy}
+        newsUnread={newsUnread}
+        bellItems={bellItems}
+        onNewsMarkRead={() => {
+          setNewsUnread(0)
+          markRead(newsItems.map(i => i.id))
+        }}
+        onTriggerUpdate={() => setUpdaterDismissed(false)}
+        showUpdateBanner={hasUpdate && updaterDismissed}
+        updateVersion={updateVersion}
+      >
+        {renderScreen()}
+      </Shell>
+
+      {(!URL_MOCK || URL_UPDATER || URL_MOCK_UPDATE) && (
+        <UpdaterModal
+          dismissed={updaterDismissed}
+          onDismiss={() => {
+          if (updateVersion) {
+            try { localStorage.setItem('proxyorbit.updaterDismissed', updateVersion) } catch {}
+          }
+          setUpdaterDismissed(true)
+        }}
+          onUpdateAvailable={(version, _body) => {
+          setHasUpdate(true)
+          setUpdateVersion(version)
+          // If this version was previously dismissed, restore that state
+          try {
+            if (localStorage.getItem('proxyorbit.updaterDismissed') === version) {
+              setUpdaterDismissed(true)
+            }
+          } catch {}
+        }}
+        />
+      )}
 
       {/* Intercept modal — only shows the oldest pending payload; next one
           auto-surfaces after the user resolves this one. */}

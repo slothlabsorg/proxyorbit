@@ -1,10 +1,19 @@
 import React from 'react'
 import type { ProxyStatus } from '@/types'
 import { ProxyStatusDot } from '@/components/ui/Badge'
+import { NewsBell } from '@/components/ui/NewsBell'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+
+type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
 
 interface TitlebarProps {
   proxyStatus: ProxyStatus | null
+  bellItems?: BellItem[]
+  newsUnread?: number
+  onNewsMarkRead?: () => void
+  onTriggerUpdate?: () => void
+  showUpdateBanner?: boolean
+  updateVersion?: string
 }
 
 // `data-tauri-drag-region` + CSS `-webkit-app-region: drag` aren't reliable
@@ -42,10 +51,16 @@ function AppLogo() {
   )
 }
 
-export function Titlebar({ proxyStatus }: TitlebarProps) {
-  const runStatus =
-    proxyStatus?.running ? 'running' :
-    'stopped'
+export function Titlebar({
+  proxyStatus,
+  bellItems = [],
+  newsUnread = 0,
+  onNewsMarkRead,
+  onTriggerUpdate,
+  showUpdateBanner = false,
+  updateVersion = '',
+}: TitlebarProps) {
+  const runStatus = proxyStatus?.running ? 'running' : 'stopped'
 
   return (
     <div
@@ -60,18 +75,39 @@ export function Titlebar({ proxyStatus }: TitlebarProps) {
         <span className="font-display font-bold text-text-primary text-sm tracking-wide">ProxyOrbit</span>
       </div>
 
-      {/* Right — proxy status */}
-      <div className="flex items-center gap-3">
-        {proxyStatus ? (
-          <div className="flex items-center gap-1.5">
-            <ProxyStatusDot status={runStatus} />
-            <span className="text-text-muted text-xs">
-              {proxyStatus.running ? `localhost:${proxyStatus.port}` : 'stopped'}
-            </span>
-          </div>
-        ) : (
-          <span className="text-text-muted text-xs">initializing…</span>
+      {/* Right — news bell + update banner + proxy status */}
+      <div className="flex items-center gap-2">
+        {showUpdateBanner && (
+          <button
+            data-testid="update-banner"
+            onClick={onTriggerUpdate}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30 text-primary text-[10px] font-semibold hover:bg-primary/25 transition-colors"
+          >
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 8h-5v8H9v-8H4z"/></svg>
+            v{updateVersion}
+          </button>
         )}
+
+        <NewsBell
+          items={bellItems}
+          unreadCount={newsUnread}
+          loading={false}
+          onMarkAllRead={onNewsMarkRead ?? (() => {})}
+          onTriggerUpdate={onTriggerUpdate}
+        />
+
+        <div className="flex items-center gap-1.5">
+          {proxyStatus ? (
+            <>
+              <ProxyStatusDot status={runStatus} />
+              <span className="text-text-muted text-xs">
+                {proxyStatus.running ? `localhost:${proxyStatus.port}` : 'stopped'}
+              </span>
+            </>
+          ) : (
+            <span className="text-text-muted text-xs">initializing…</span>
+          )}
+        </div>
       </div>
     </div>
   )
