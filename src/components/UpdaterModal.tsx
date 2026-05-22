@@ -52,8 +52,15 @@ export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvai
     getMockParam() ? { status: 'available', info: MOCK_UPDATE } : { status: 'idle' }
   )
   const [localDismissed, setLocalDismissed] = useState(false)
-  const dismissed = dismissedProp ?? localDismissed
+  useEffect(() => { if (!dismissedProp) setLocalDismissed(false) }, [dismissedProp])
+  const dismissed = !!dismissedProp || localDismissed
   const dismiss = () => { setLocalDismissed(true); onDismiss?.() }
+
+  // Notify parent of mock update so bellItems can include the update-available entry
+  useEffect(() => {
+    if (getMockParam()) onUpdateAvailable?.(MOCK_UPDATE.version, MOCK_UPDATE.body)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const checkForUpdate = useCallback(async () => {
     if (getMockParam()) return // already pre-populated
