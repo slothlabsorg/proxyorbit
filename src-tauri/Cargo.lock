@@ -2845,6 +2845,7 @@ dependencies = [
  "hyper-tls",
  "pem",
  "rcgen",
+ "regex",
  "rustls",
  "rustls-pki-types",
  "serde",

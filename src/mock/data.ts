@@ -121,3 +121,20 @@ export const mockSettings: ProxySettings = {
   max_entries: 10_000,
   exclude_hosts: ['localhost', '127.0.0.1'],
 }
+
+export const mockRewriteRules: import('@/types').RewriteRule[] = [
+  {
+    id: 'example-serve-local-file',
+    name: 'Example — serve a local file instead of a CDN asset',
+    enabled: false,
+    match: { method: 'GET', host: 'cdn.example.com', path_contains: '/dist/', url_regex: null },
+    action: { type: 'serve_local_file', path: '/Users/you/dev/your-project/dist/bundle.js', content_type: 'application/javascript' },
+  },
+  {
+    id: 'example-rewrite-response',
+    name: 'Example — rewrite a field in a JSON response',
+    enabled: false,
+    match: { method: null, host: 'api.example.com', path_contains: '/v1/', url_regex: null },
+    action: { type: 'rewrite_response_body', replacements: [['"mode":"a"', '"mode":"b"']] },
+  },
+]

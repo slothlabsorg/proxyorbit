@@ -25,6 +25,17 @@ function IconCapture() {
   )
 }
 
+function IconRules() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+      <circle cx="8" cy="6" r="2" fill="currentColor"/>
+      <circle cx="16" cy="12" r="2" fill="currentColor"/>
+      <circle cx="10" cy="18" r="2" fill="currentColor"/>
+    </svg>
+  )
+}
+
 function IconSettings() {
   return (
     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -84,6 +95,7 @@ function IconNews() {
 
 const topNav = [
   { id: 'home' as Screen, label: 'Capture', icon: <IconCapture /> },
+  { id: 'rules' as Screen, label: 'Rules',  icon: <IconRules /> },
   { id: 'news' as Screen, label: 'News',    icon: <IconNews /> },
 ]
 

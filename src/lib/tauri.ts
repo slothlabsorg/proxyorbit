@@ -1,6 +1,7 @@
 import type {
   ProxyEntry, ProxyStatus, ProxySettings,
   HeaderList, ReplayResult, InterceptPayload, InterceptDecision,
+  RewriteRule,
 } from '@/types'
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen as tauriListen, emit as tauriEmit } from '@tauri-apps/api/event'
@@ -64,6 +65,12 @@ export const api = {
   getCaPem: () => invoke<string>('get_ca_pem'),
   getCaPemPath: () => invoke<string>('get_ca_pem_path'),
   setMitmBypassHosts: (hosts: string[]) => invoke<void>('set_mitm_bypass_hosts', { hosts }),
+
+  // Rewrite rules — plugin injection, response/request rewrites, mocks
+  getRewriteRules: () => invoke<RewriteRule[]>('get_rewrite_rules'),
+  setRewriteRules: (rules: RewriteRule[]) => invoke<void>('set_rewrite_rules', { rules }),
+  getDefaultPreset: (localFilePath: string) =>
+    invoke<RewriteRule[]>('get_default_preset', { localFilePath }),
 
   // Events
   onRequest: (handler: (entry: ProxyEntry) => void) => listen<ProxyEntry>('proxy-request', handler),

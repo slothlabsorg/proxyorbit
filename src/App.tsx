@@ -5,6 +5,7 @@ import { api } from '@/lib/tauri'
 import { mockEntries } from '@/mock/data'
 import { Shell } from '@/components/layout/Shell'
 import { Home } from '@/screens/Home'
+import { Rules } from '@/screens/Rules'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
@@ -249,6 +250,8 @@ export default function App() {
         }} />
       case 'settings':
         return <Settings />
+      case 'rules':
+        return <Rules />
       case 'docs':
         return <Docs />
       case 'support':

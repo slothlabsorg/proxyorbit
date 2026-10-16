@@ -1,4 +1,4 @@
-export type Screen = 'home' | 'news' | 'settings' | 'docs' | 'support'
+export type Screen = 'home' | 'news' | 'settings' | 'docs' | 'support' | 'rules'
 
 /** Matches the tuple form serialised by the Rust side — `Vec<(String, String)>`. */
 export type HeaderList = Array<[string, string]>
@@ -76,4 +76,29 @@ export interface ReplayResult {
   response_body: string | null
   response_body_truncated: boolean
   error: string | null
+}
+
+/** Rewrite rule matcher — mirrors Rust `RuleMatch`. */
+export interface RuleMatch {
+  method?: string | null
+  host: string
+  path_contains: string
+  url_regex?: string | null
+}
+
+/** Rewrite action — a tagged union mirroring Rust `RuleAction`. The `type`
+ *  field is the serde tag (snake_case). */
+export type RuleAction =
+  | { type: 'serve_local_file'; path: string; content_type?: string | null }
+  | { type: 'rewrite_response_body'; replacements: Array<[string, string]> }
+  | { type: 'mock_response'; status: number; content_type?: string | null; body: string }
+  | { type: 'redirect'; to_url: string }
+  | { type: 'rewrite_request_body'; replacements: Array<[string, string]> }
+
+export interface RewriteRule {
+  id: string
+  name: string
+  enabled: boolean
+  match: RuleMatch
+  action: RuleAction
 }

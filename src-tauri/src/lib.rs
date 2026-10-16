@@ -1,5 +1,5 @@
 mod ca;
-mod commands;
+pub mod commands;
 
 use commands::{proxy, settings, system_proxy};
 use proxy::ProxyState;
@@ -29,6 +29,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ProxyState::default())
+        .setup(|app| {
+            // Load persisted rewrite rules on startup. If none exist yet,
+            // seed a starter preset (one disabled example of each common
+            // rule) so the rules screen isn't empty on first launch and the
+            // shape of a rule is discoverable.
+            use tauri::Manager;
+            let state = app.state::<ProxyState>();
+            let mut loaded = commands::rewrite::load_rules();
+            if loaded.is_empty() {
+                let example_path = dirs::home_dir()
+                    .map(|h| h.join("dev/your-project/dist/bundle.js"))
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "/path/to/your/dist/bundle.js".into());
+                loaded = commands::rewrite::default_preset(&example_path);
+                let _ = commands::rewrite::save_rules(&loaded);
+            }
+            *state.rewrite_rules.lock().unwrap() = loaded;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             proxy::start_proxy,
             proxy::stop_proxy,
@@ -42,6 +61,9 @@ pub fn run() {
             proxy::get_ca_pem,
             proxy::get_ca_pem_path,
             proxy::set_mitm_bypass_hosts,
+            proxy::set_rewrite_rules,
+            proxy::get_rewrite_rules,
+            proxy::get_default_preset,
             settings::get_settings,
             settings::save_settings,
             system_proxy::get_network_service,

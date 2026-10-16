@@ -19,6 +19,7 @@ use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
 use crate::ca::Ca;
+use crate::commands::rewrite::{first_match, guess_content_type, RewriteRule, RuleAction};
 
 /// Hard cap on in-memory request log — prevents unbounded growth during long
 /// capture sessions. When full, oldest entries are evicted first.
@@ -142,6 +143,10 @@ pub struct ProxyState {
     /// logger in that case).
     pub ca: Arc<Mutex<Option<Arc<Ca>>>>,
     pub mitm_bypass_hosts: Arc<Mutex<Vec<String>>>,
+    /// Automatic rewrite rules — plugin injection, response/request body
+    /// rewrites, redirects, mocks. Applied in `handle_request` before and
+    /// after forwarding. Empty by default (proxy behaves as a pure logger).
+    pub rewrite_rules: Arc<Mutex<Vec<RewriteRule>>>,
 }
 
 impl Default for ProxyState {
@@ -157,6 +162,7 @@ impl Default for ProxyState {
             mitm_enabled: Arc::new(Mutex::new(false)),
             ca: Arc::new(Mutex::new(None)),
             mitm_bypass_hosts: Arc::new(Mutex::new(Vec::new())),
+            rewrite_rules: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -395,6 +401,106 @@ async fn handle_request(
     let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/").to_string();
     let req_headers_list = headers_to_list(req.headers());
 
+    // ── Rewrite rules ────────────────────────────────────────────────────
+    // Evaluate automatic rules. ServeLocalFile / MockResponse / Redirect
+    // short-circuit or alter forwarding; body rewrites are applied to the
+    // request now and to the response after the upstream call.
+    let matched_rule = {
+        let rules = state.rewrite_rules.lock().unwrap();
+        first_match(&rules, &method, &host, &url_str, &path)
+    };
+
+    // ServeLocalFile and MockResponse return immediately without forwarding.
+    if let Some(rule) = &matched_rule {
+        match &rule.action {
+            RuleAction::ServeLocalFile { path: file_path, content_type } => {
+                match tokio::fs::read(file_path).await {
+                    Ok(bytes) => {
+                        let ct = content_type.clone()
+                            .unwrap_or_else(|| guess_content_type(file_path).to_string());
+                        let resp_size = bytes.len() as u64;
+                        let entry = ProxyEntry {
+                            id: Uuid::new_v4().to_string(),
+                            timestamp: ts,
+                            method: method.clone(),
+                            url: url_str.clone(),
+                            host: host.clone(),
+                            path: path.clone(),
+                            status: Some(200),
+                            duration_ms: Some(0),
+                            request_size: 0,
+                            response_size: resp_size,
+                            is_https: url_str.starts_with("https://"),
+                            protocol: "REWRITE (local file)".into(),
+                            process: None,
+                            request_headers: req_headers_list.clone(),
+                            response_headers: vec![
+                                ("content-type".into(), ct.clone()),
+                                ("x-proxyorbit-rule".into(), rule.name.clone()),
+                                ("access-control-allow-origin".into(), "*".into()),
+                            ],
+                            request_body: None,
+                            response_body: Some(format!("<served {} bytes from {}>", resp_size, file_path)),
+                            request_body_truncated: false,
+                            response_body_truncated: false,
+                            kind: EntryKind::Http,
+                        };
+                        store_and_emit(entry, &state.entries, &app);
+                        return Ok(Response::builder()
+                            .status(StatusCode::OK)
+                            .header("content-type", ct)
+                            .header("access-control-allow-origin", "*")
+                            .header("x-proxyorbit-rule", &rule.name)
+                            .body(Body::from(bytes))
+                            .unwrap_or_else(|_| Response::new(Body::empty())));
+                    }
+                    Err(e) => {
+                        eprintln!("[proxyorbit] ServeLocalFile {} failed: {} — forwarding upstream", file_path, e);
+                        // Fall through to normal forwarding on read error.
+                    }
+                }
+            }
+            RuleAction::MockResponse { status, content_type, body } => {
+                let ct = content_type.clone().unwrap_or_else(|| "application/json".to_string());
+                let entry = ProxyEntry {
+                    id: Uuid::new_v4().to_string(),
+                    timestamp: ts,
+                    method: method.clone(),
+                    url: url_str.clone(),
+                    host: host.clone(),
+                    path: path.clone(),
+                    status: Some(*status),
+                    duration_ms: Some(0),
+                    request_size: 0,
+                    response_size: body.len() as u64,
+                    is_https: url_str.starts_with("https://"),
+                    protocol: "REWRITE (mock)".into(),
+                    process: None,
+                    request_headers: req_headers_list.clone(),
+                    response_headers: vec![
+                        ("content-type".into(), ct.clone()),
+                        ("x-proxyorbit-rule".into(), rule.name.clone()),
+                        ("access-control-allow-origin".into(), "*".into()),
+                    ],
+                    request_body: None,
+                    response_body: Some(body.clone()),
+                    request_body_truncated: false,
+                    response_body_truncated: false,
+                    kind: EntryKind::Http,
+                };
+                store_and_emit(entry, &state.entries, &app);
+                return Ok(Response::builder()
+                    .status(StatusCode::from_u16(*status).unwrap_or(StatusCode::OK))
+                    .header("content-type", ct)
+                    .header("access-control-allow-origin", "*")
+                    .header("x-proxyorbit-rule", &rule.name)
+                    .body(Body::from(body.clone()))
+                    .unwrap_or_else(|_| Response::new(Body::empty())));
+            }
+            _ => { /* Redirect / body rewrites handled below */ }
+        }
+    }
+
     // Buffer the request body so we can log it AND forward it.
     let (parts, body) = req.into_parts();
     let req_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
@@ -476,6 +582,24 @@ async fn handle_request(
         }
     }
 
+    // ── Apply Redirect / RewriteRequestBody rules ───────────────────────
+    if let Some(rule) = &matched_rule {
+        match &rule.action {
+            RuleAction::Redirect { to_url } => {
+                final_url = to_url.clone();
+            }
+            RuleAction::RewriteRequestBody { replacements } => {
+                if let Ok(mut s) = String::from_utf8(final_body.clone()) {
+                    for (from, to) in replacements {
+                        s = s.replace(from, to);
+                    }
+                    final_body = s.into_bytes();
+                }
+            }
+            _ => {}
+        }
+    }
+
     // ── Forward the (possibly modified) request ──────────────────────────
     let start = Instant::now();
     let https = HttpsConnector::new();
@@ -498,7 +622,21 @@ async fn handle_request(
             let status = Some(resp.status().as_u16());
             let resp_headers_list = headers_to_list(resp.headers());
             let (resp_parts, resp_body) = resp.into_parts();
-            let resp_bytes = hyper::body::to_bytes(resp_body).await.unwrap_or_default();
+            let mut resp_bytes = hyper::body::to_bytes(resp_body).await.unwrap_or_default().to_vec();
+
+            // ── Apply RewriteResponseBody rule ──────────────────────────
+            if let Some(rule) = &matched_rule {
+                if let RuleAction::RewriteResponseBody { replacements } = &rule.action {
+                    if let Ok(mut s) = String::from_utf8(resp_bytes.clone()) {
+                        for (from, to) in replacements {
+                            s = s.replace(from, to);
+                        }
+                        resp_bytes = s.into_bytes();
+                    }
+                }
+            }
+            let resp_bytes = hyper::body::Bytes::from(resp_bytes);
+
             let resp_size = resp_bytes.len() as u64;
             let (resp_body_str, resp_truncated) = capture_body(&resp_bytes);
 
@@ -525,6 +663,10 @@ async fn handle_request(
                 kind: EntryKind::Http,
             };
             store_and_emit(entry, &state.entries, &app);
+            // Rebuild response — strip content-length so hyper recomputes it
+            // (a RewriteResponseBody may have changed the body size).
+            let mut resp_parts = resp_parts;
+            resp_parts.headers.remove(hyper::header::CONTENT_LENGTH);
             Ok(Response::from_parts(resp_parts, Body::from(resp_bytes)))
         }
         Err(e) => {
@@ -596,6 +738,8 @@ struct StateForProxy {
     /// strict certificate pinning (banking apps, some mobile SDKs) that
     /// would break under our substituted cert.
     mitm_bypass_hosts: Arc<Mutex<Vec<String>>>,
+    /// Automatic rewrite rules snapshot.
+    rewrite_rules: Arc<Mutex<Vec<RewriteRule>>>,
 }
 
 /// Match a host against the user's opt-out list. Simple suffix match so
@@ -650,6 +794,7 @@ pub async fn start_proxy(
         mitm_enabled: Arc::clone(&state.mitm_enabled),
         ca: ca_snapshot,
         mitm_bypass_hosts: Arc::clone(&state.mitm_bypass_hosts),
+        rewrite_rules: Arc::clone(&state.rewrite_rules),
     });
     let (tx, rx) = oneshot::channel::<()>();
 
@@ -766,6 +911,32 @@ pub fn get_ca_pem_path() -> Result<String, String> {
 #[tauri::command]
 pub fn set_mitm_bypass_hosts(hosts: Vec<String>, state: tauri::State<'_, ProxyState>) {
     *state.mitm_bypass_hosts.lock().unwrap() = hosts;
+}
+
+// ── Rewrite rule commands ──────────────────────────────────────────────────
+
+/// Replace the full set of rewrite rules. The frontend owns rule ordering;
+/// they're evaluated top-to-bottom and the first enabled match wins.
+/// Persisted to disk so they survive restarts.
+#[tauri::command]
+pub fn set_rewrite_rules(rules: Vec<RewriteRule>, state: tauri::State<'_, ProxyState>) -> Result<(), String> {
+    crate::commands::rewrite::save_rules(&rules)?;
+    *state.rewrite_rules.lock().unwrap() = rules;
+    Ok(())
+}
+
+/// Return the current rewrite rules for display/editing.
+#[tauri::command]
+pub fn get_rewrite_rules(state: tauri::State<'_, ProxyState>) -> Vec<RewriteRule> {
+    state.rewrite_rules.lock().unwrap().clone()
+}
+
+/// Return the built-in starter preset (disabled examples), seeded with the
+/// given local file path. The frontend can present these as a one-click
+/// starting point for authoring rules.
+#[tauri::command]
+pub fn get_default_preset(local_file_path: String) -> Vec<RewriteRule> {
+    crate::commands::rewrite::default_preset(&local_file_path)
 }
 
 #[tauri::command]

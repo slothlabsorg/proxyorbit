@@ -36,6 +36,11 @@ export default defineConfig({
       testMatch: 'tests/news.spec.ts',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      name: 'rules',
+      testMatch: 'tests/rules.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 
   // Auto-start the Vite dev server
